@@ -22,7 +22,8 @@ dependencies = [
     "pydantic (==2.12.5)",
     "pydantic-core (==2.41.5)",
     "typing-inspection (==0.4.2)",
-    "typing-extensions (==4.15.0)"
+    "typing-extensions (==4.15.0)",
+    "sentry-sdk[flask] (>=2.52.0,<3.0.0)"
 ]
 
 [tool.poetry]

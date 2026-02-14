@@ -1,4 +1,5 @@
 from flask import jsonify, g, Response, Flask
+import sentry_sdk
 
 # Base error classes
 class AppError(Exception):
@@ -36,6 +37,7 @@ def handle_app_error(error: AppError) -> tuple[Response, int]:
   }), error.status_code
 
 def handle_uncaught_error(error: Exception) -> tuple[Response, int]:
+  sentry_sdk.capture_exception(error)
   return jsonify({
     "message": "An unexpected error occurred",
     "error_code": "INTERNAL_ERROR",
