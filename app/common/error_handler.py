@@ -1,4 +1,5 @@
 from flask import jsonify, g, Response, Flask
+from werkzeug.exceptions import NotFound as RouteNotFound
 import sentry_sdk
 
 # Base error classes
@@ -46,4 +47,5 @@ def handle_uncaught_error(error: Exception) -> tuple[Response, int]:
 # Register error handlers
 def register_error_handlers(app: Flask):
   app.register_error_handler(AppError, handle_app_error)
+  app.register_error_handler(RouteNotFound, lambda e: (jsonify({"message": "Not found", "error_code": "NOT_FOUND"}), 404))
   app.register_error_handler(Exception, handle_uncaught_error)

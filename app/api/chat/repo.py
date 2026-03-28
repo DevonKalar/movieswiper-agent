@@ -1,12 +1,16 @@
 from pymongo import ReturnDocument
-from app.extensions import mongo_db
+import app.extensions as extensions
 from .schemas import ConversationDocument, ConversationRecord, MessageDocument, MessageRecord
+
+
+def _db():
+    return extensions.mongo_db
 
 
 # --- Conversation ---
 
 def list_conversations() -> list[ConversationRecord]:
-    col = mongo_db['conversations']
+    col = _db()['conversations']
     docs = list(col.find().sort('_id', -1))
     for d in docs:
         d["_id"] = str(d["_id"])
@@ -14,7 +18,7 @@ def list_conversations() -> list[ConversationRecord]:
 
 
 def insert_conversation(doc: ConversationDocument) -> ConversationRecord:
-    col = mongo_db['conversations']
+    col = _db()['conversations']
     data = doc.model_dump()
     result = col.insert_one(data)
     data["_id"] = str(result.inserted_id)
@@ -22,7 +26,7 @@ def insert_conversation(doc: ConversationDocument) -> ConversationRecord:
 
 
 def find_conversation(conversation_id: str) -> ConversationRecord | None:
-    col = mongo_db['conversations']
+    col = _db()['conversations']
     doc = col.find_one({"conversation_id": conversation_id})
     if doc is None:
         return None
@@ -31,7 +35,7 @@ def find_conversation(conversation_id: str) -> ConversationRecord | None:
 
 
 def update_conversation(conversation_id: str, updates: dict) -> ConversationRecord | None:
-    col = mongo_db['conversations']
+    col = _db()['conversations']
     doc = col.find_one_and_update(
         {"conversation_id": conversation_id},
         {"$set": updates},
@@ -44,7 +48,7 @@ def update_conversation(conversation_id: str, updates: dict) -> ConversationReco
 
 
 def delete_conversation(conversation_id: str) -> bool:
-    col = mongo_db['conversations']
+    col = _db()['conversations']
     result = col.delete_one({"conversation_id": conversation_id})
     return result.deleted_count > 0
 
@@ -52,7 +56,7 @@ def delete_conversation(conversation_id: str) -> bool:
 # --- Messages ---
 
 def list_chat_messages(conversation_id: str, limit: int = 50) -> list[MessageRecord]:
-    col = mongo_db['chat_messages']
+    col = _db()['chat_messages']
     cursor = (col.find({"conversation_id": conversation_id})
                  .sort('_id', -1)
                  .limit(limit))
@@ -63,7 +67,7 @@ def list_chat_messages(conversation_id: str, limit: int = 50) -> list[MessageRec
 
 
 def insert_message(doc: MessageDocument) -> MessageRecord:
-    col = mongo_db['chat_messages']
+    col = _db()['chat_messages']
     data = doc.model_dump()
     result = col.insert_one(data)
     data["_id"] = str(result.inserted_id)
@@ -71,7 +75,7 @@ def insert_message(doc: MessageDocument) -> MessageRecord:
 
 
 def find_message(conversation_id: str, message_id: str) -> MessageRecord | None:
-    col = mongo_db['chat_messages']
+    col = _db()['chat_messages']
     doc = col.find_one({"conversation_id": conversation_id, "message_id": message_id})
     if doc is None:
         return None
@@ -80,6 +84,6 @@ def find_message(conversation_id: str, message_id: str) -> MessageRecord | None:
 
 
 def delete_message(conversation_id: str, message_id: str) -> bool:
-    col = mongo_db['chat_messages']
+    col = _db()['chat_messages']
     result = col.delete_one({"conversation_id": conversation_id, "message_id": message_id})
     return result.deleted_count > 0
