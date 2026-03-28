@@ -1,22 +1,20 @@
-FROM python:3.12-slim
+FROM python:3.14-slim
 
-# Prevent python from writing .pyc files and enables unbuffered logging
-ENV PYTHONDONTWRITEBYTECODE=1 \`
+ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app
+    PYTHONPATH=/app \
+    POETRY_NO_INTERACTION=1 \
+    POETRY_VIRTUALENVS_CREATE=false
 
 WORKDIR /app
 
-# Copy requirements.txt and install dependencies
-COPY requirements.txt .
-RUN pip install -r requirements.txt
+RUN pip install --no-cache-dir "poetry>=2.0.0"
 
-# Copy the rest of the application code
+COPY pyproject.toml poetry.lock ./
+RUN poetry install --only main --no-root
+
 COPY . .
 
-# Expose the port the app will run on
 EXPOSE 8000
 
-# - bind 0.0.0.0 so it's reachable outside the container
-# - set workers; a common starting point is (2 * CPU) + 1
-CMD ["gunicorn", "-b", "0.0.0.0:8000", "app.wsgi:app", "--workers", "2", "--threads", "4", "--timeout", "60"]
+CMD ["gunicorn", "-b", "0.0.0.0:8000", "wsgi:app", "--workers", "2", "--threads", "4", "--timeout", "60"]

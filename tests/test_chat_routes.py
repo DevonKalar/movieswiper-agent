@@ -1,68 +1,53 @@
-from unittest.mock import patch
-from datetime import datetime
-from app.api.chat.schemas import ConversationResponse, MessageResponse
-
-
-FIXED_TS = datetime(2024, 1, 1, 12, 0, 0)
+import pytest
 
 CONVERSATIONS_URL = "/chat/conversations"
-CONVERSATION_ID = "conv-1"
-MESSAGE_ID = "msg-uuid"
-CONVERSATION_URL = f"{CONVERSATIONS_URL}/{CONVERSATION_ID}"
-MESSAGES_URL = f"{CONVERSATION_URL}/messages"
-MESSAGE_URL = f"{MESSAGES_URL}/{MESSAGE_ID}"
+MISSING_ID = "00000000-0000-0000-0000-000000000000"
 
-SAMPLE_CONVERSATION = ConversationResponse(
-    conversation_id=CONVERSATION_ID,
-    title="Test Chat",
-    model="gpt-4o",
-    status="active",
-    created_at=FIXED_TS,
-)
 
-SAMPLE_CONVERSATION_JSON = {
-    "conversationId": CONVERSATION_ID,
-    "title": "Test Chat",
-    "model": "gpt-4o",
-    "status": "active",
-    "createdAt": FIXED_TS.isoformat(),
-}
+# ---------------------------------------------------------------------------
+# Seed fixtures
+# ---------------------------------------------------------------------------
 
-SAMPLE_MESSAGE = MessageResponse(
-    message_id=MESSAGE_ID,
-    conversation_id=CONVERSATION_ID,
-    content="Hello",
-    role="user",
-    timestamp=FIXED_TS,
-)
+@pytest.fixture
+def conversation(client):
+    response = client.post(CONVERSATIONS_URL, json={"title": "Test Chat", "model": "gpt-4o"})
+    assert response.status_code == 201
+    return response.get_json()["conversation"]
 
-SAMPLE_MESSAGE_JSON = {
-    "messageId": MESSAGE_ID,
-    "conversationId": CONVERSATION_ID,
-    "content": "Hello",
-    "role": "user",
-    "timestamp": FIXED_TS.isoformat(),
-}
 
+@pytest.fixture
+def message(client, conversation):
+    url = f"{CONVERSATIONS_URL}/{conversation['conversationId']}/messages"
+    response = client.post(url, json={"content": "Hello", "role": "user"})
+    assert response.status_code == 201
+    return response.get_json()["message"]
+
+
+# ---------------------------------------------------------------------------
+# Conversations
+# ---------------------------------------------------------------------------
 
 class TestListConversations:
-    def test_returns_conversations(self, client):
-        with patch("app.api.chat.routes.list_conversations_service", return_value=[SAMPLE_CONVERSATION]):
-            response = client.get(CONVERSATIONS_URL)
+    def test_returns_seeded_conversations(self, client):
+        client.post(CONVERSATIONS_URL, json={"title": "First"})
+        client.post(CONVERSATIONS_URL, json={"title": "Second"})
+
+        response = client.get(CONVERSATIONS_URL)
 
         assert response.status_code == 200
-        assert response.get_json() == {"items": [SAMPLE_CONVERSATION_JSON]}
+        items = response.get_json()["items"]
+        assert len(items) == 2
+        titles = {c["title"] for c in items}
+        assert titles == {"First", "Second"}
 
-    def test_empty_result(self, client):
-        with patch("app.api.chat.routes.list_conversations_service", return_value=[]):
-            response = client.get(CONVERSATIONS_URL)
+    def test_empty_when_no_conversations(self, client):
+        response = client.get(CONVERSATIONS_URL)
 
         assert response.status_code == 200
         assert response.get_json() == {"items": []}
 
-    def test_response_is_camel_case(self, client):
-        with patch("app.api.chat.routes.list_conversations_service", return_value=[SAMPLE_CONVERSATION]):
-            data = client.get(CONVERSATIONS_URL).get_json()
+    def test_response_is_camel_case(self, client, conversation):
+        data = client.get(CONVERSATIONS_URL).get_json()
 
         item = data["items"][0]
         assert "conversationId" in item
@@ -72,103 +57,138 @@ class TestListConversations:
 
 
 class TestCreateConversation:
-    def test_creates_conversation(self, client):
-        with patch("app.api.chat.routes.create_conversation_service", return_value=SAMPLE_CONVERSATION) as mock:
-            response = client.post(CONVERSATIONS_URL, json={"title": "Test Chat", "model": "gpt-4o"})
-            called_req = mock.call_args[0][0]
-            assert called_req.title == "Test Chat"
-            assert called_req.model == "gpt-4o"
+    def test_creates_with_provided_fields(self, client):
+        response = client.post(CONVERSATIONS_URL, json={"title": "My Chat", "model": "gpt-4o-mini"})
 
         assert response.status_code == 201
-        assert response.get_json() == {"conversation": SAMPLE_CONVERSATION_JSON}
+        conv = response.get_json()["conversation"]
+        assert conv["title"] == "My Chat"
+        assert conv["model"] == "gpt-4o-mini"
+        assert conv["status"] == "active"
+        assert "conversationId" in conv
+        assert "createdAt" in conv
 
-    def test_uses_defaults_when_body_empty(self, client):
-        with patch("app.api.chat.routes.create_conversation_service", return_value=SAMPLE_CONVERSATION) as mock:
-            client.post(CONVERSATIONS_URL, json={})
-            called_req = mock.call_args[0][0]
-            assert called_req.title == "New Conversation"
-            assert called_req.model == "gpt-4o"
+    def test_persists_to_db(self, client):
+        post_resp = client.post(CONVERSATIONS_URL, json={"title": "Persisted"})
+        conv_id = post_resp.get_json()["conversation"]["conversationId"]
+
+        get_resp = client.get(f"{CONVERSATIONS_URL}/{conv_id}")
+        assert get_resp.status_code == 200
+        assert get_resp.get_json()["conversation"]["title"] == "Persisted"
+
+    def test_uses_defaults_for_empty_body(self, client):
+        response = client.post(CONVERSATIONS_URL, json={})
+
+        assert response.status_code == 201
+        conv = response.get_json()["conversation"]
+        assert conv["title"] == "New Conversation"
+        assert conv["model"] == "gpt-4o"
 
     def test_no_body_uses_defaults(self, client):
-        with patch("app.api.chat.routes.create_conversation_service", return_value=SAMPLE_CONVERSATION):
-            response = client.post(CONVERSATIONS_URL)
+        response = client.post(CONVERSATIONS_URL)
 
         assert response.status_code == 201
 
 
 class TestGetConversation:
-    def test_returns_conversation(self, client):
-        with patch("app.api.chat.routes.get_conversation_service", return_value=SAMPLE_CONVERSATION):
-            response = client.get(CONVERSATION_URL)
+    def test_returns_conversation(self, client, conversation):
+        conv_id = conversation["conversationId"]
+        response = client.get(f"{CONVERSATIONS_URL}/{conv_id}")
 
         assert response.status_code == 200
-        assert response.get_json() == {"conversation": SAMPLE_CONVERSATION_JSON}
+        assert response.get_json()["conversation"]["conversationId"] == conv_id
 
     def test_not_found_returns_404(self, client):
-        from app.common.error_handler import NotFoundError
-        with patch("app.api.chat.routes.get_conversation_service", side_effect=NotFoundError()):
-            response = client.get(CONVERSATION_URL)
+        response = client.get(f"{CONVERSATIONS_URL}/{MISSING_ID}")
 
         assert response.status_code == 404
 
 
 class TestUpdateConversation:
-    def test_updates_conversation(self, client):
-        updated = ConversationResponse(
-            conversation_id=CONVERSATION_ID,
-            title="Renamed",
-            model="gpt-4o",
-            status="active",
-            created_at=FIXED_TS,
-        )
-        with patch("app.api.chat.routes.update_conversation_service", return_value=updated) as mock:
-            response = client.put(CONVERSATION_URL, json={"title": "Renamed"})
-            assert mock.call_args[0][0] == CONVERSATION_ID
-            assert mock.call_args[0][1].title == "Renamed"
+    def test_updates_title(self, client, conversation):
+        conv_id = conversation["conversationId"]
+        response = client.put(f"{CONVERSATIONS_URL}/{conv_id}", json={"title": "Renamed"})
 
         assert response.status_code == 200
         assert response.get_json()["conversation"]["title"] == "Renamed"
 
+    def test_updates_status(self, client, conversation):
+        conv_id = conversation["conversationId"]
+        response = client.put(f"{CONVERSATIONS_URL}/{conv_id}", json={"status": "archived"})
+
+        assert response.status_code == 200
+        assert response.get_json()["conversation"]["status"] == "archived"
+
+    def test_persists_update_to_db(self, client, conversation):
+        conv_id = conversation["conversationId"]
+        client.put(f"{CONVERSATIONS_URL}/{conv_id}", json={"title": "Updated"})
+
+        get_resp = client.get(f"{CONVERSATIONS_URL}/{conv_id}")
+        assert get_resp.get_json()["conversation"]["title"] == "Updated"
+
     def test_not_found_returns_404(self, client):
-        from app.common.error_handler import NotFoundError
-        with patch("app.api.chat.routes.update_conversation_service", side_effect=NotFoundError()):
-            response = client.put(CONVERSATION_URL, json={"title": "X"})
+        response = client.put(f"{CONVERSATIONS_URL}/{MISSING_ID}", json={"title": "X"})
 
         assert response.status_code == 404
 
 
 class TestDeleteConversation:
-    def test_deletes_conversation(self, client):
-        with patch("app.api.chat.routes.delete_conversation_service"):
-            response = client.delete(CONVERSATION_URL)
+    def test_deletes_conversation(self, client, conversation):
+        conv_id = conversation["conversationId"]
+        response = client.delete(f"{CONVERSATIONS_URL}/{conv_id}")
 
         assert response.status_code == 204
 
+    def test_deleted_conversation_is_gone(self, client, conversation):
+        conv_id = conversation["conversationId"]
+        client.delete(f"{CONVERSATIONS_URL}/{conv_id}")
+
+        get_resp = client.get(f"{CONVERSATIONS_URL}/{conv_id}")
+        assert get_resp.status_code == 404
+
     def test_not_found_returns_404(self, client):
-        from app.common.error_handler import NotFoundError
-        with patch("app.api.chat.routes.delete_conversation_service", side_effect=NotFoundError()):
-            response = client.delete(CONVERSATION_URL)
+        response = client.delete(f"{CONVERSATIONS_URL}/{MISSING_ID}")
 
         assert response.status_code == 404
 
 
+# ---------------------------------------------------------------------------
+# Messages
+# ---------------------------------------------------------------------------
+
 class TestGetMessages:
-    def test_returns_messages(self, client):
-        with patch("app.api.chat.routes.get_recent_messages", return_value=[SAMPLE_MESSAGE]) as mock:
-            response = client.get(MESSAGES_URL)
-            mock.assert_called_once_with(CONVERSATION_ID, limit=50)
+    def test_returns_seeded_messages(self, client, conversation):
+        conv_id = conversation["conversationId"]
+        messages_url = f"{CONVERSATIONS_URL}/{conv_id}/messages"
+        client.post(messages_url, json={"content": "First", "role": "user"})
+        client.post(messages_url, json={"content": "Second", "role": "assistant"})
+
+        response = client.get(messages_url)
 
         assert response.status_code == 200
-        assert response.get_json() == {"items": [SAMPLE_MESSAGE_JSON]}
+        assert len(response.get_json()["items"]) == 2
 
-    def test_passes_limit_param(self, client):
-        with patch("app.api.chat.routes.get_recent_messages", return_value=[]) as mock:
-            client.get(f"{MESSAGES_URL}?limit=10")
-            mock.assert_called_once_with(CONVERSATION_ID, limit=10)
+    def test_empty_when_no_messages(self, client, conversation):
+        conv_id = conversation["conversationId"]
+        response = client.get(f"{CONVERSATIONS_URL}/{conv_id}/messages")
 
-    def test_response_is_camel_case(self, client):
-        with patch("app.api.chat.routes.get_recent_messages", return_value=[SAMPLE_MESSAGE]):
-            data = client.get(MESSAGES_URL).get_json()
+        assert response.status_code == 200
+        assert response.get_json() == {"items": []}
+
+    def test_limit_param_restricts_results(self, client, conversation):
+        conv_id = conversation["conversationId"]
+        messages_url = f"{CONVERSATIONS_URL}/{conv_id}/messages"
+        for i in range(5):
+            client.post(messages_url, json={"content": f"msg {i}", "role": "user"})
+
+        response = client.get(f"{messages_url}?limit=2")
+
+        assert response.status_code == 200
+        assert len(response.get_json()["items"]) == 2
+
+    def test_response_is_camel_case(self, client, message, conversation):
+        conv_id = conversation["conversationId"]
+        data = client.get(f"{CONVERSATIONS_URL}/{conv_id}/messages").get_json()
 
         item = data["items"][0]
         assert "messageId" in item
@@ -176,29 +196,41 @@ class TestGetMessages:
         assert "message_id" not in item
         assert "conversation_id" not in item
 
-    def test_empty_result(self, client):
-        with patch("app.api.chat.routes.get_recent_messages", return_value=[]):
-            response = client.get(MESSAGES_URL)
-
-        assert response.status_code == 200
-        assert response.get_json() == {"items": []}
-
 
 class TestCreateMessage:
-    def test_creates_message(self, client):
-        with patch("app.api.chat.routes.create_message_service", return_value=SAMPLE_MESSAGE) as mock:
-            response = client.post(MESSAGES_URL, json={"content": "Hello", "role": "user"})
-            assert mock.call_args[0][0] == CONVERSATION_ID
-            called_req = mock.call_args[0][1]
-            assert called_req.content == "Hello"
-            assert called_req.role == "user"
+    def test_creates_message(self, client, conversation):
+        conv_id = conversation["conversationId"]
+        response = client.post(
+            f"{CONVERSATIONS_URL}/{conv_id}/messages",
+            json={"content": "Hello", "role": "user"},
+        )
 
         assert response.status_code == 201
-        assert response.get_json() == {"message": SAMPLE_MESSAGE_JSON}
+        msg = response.get_json()["message"]
+        assert msg["content"] == "Hello"
+        assert msg["role"] == "user"
+        assert msg["conversationId"] == conv_id
+        assert "messageId" in msg
+        assert "timestamp" in msg
 
-    def test_response_is_camel_case(self, client):
-        with patch("app.api.chat.routes.create_message_service", return_value=SAMPLE_MESSAGE):
-            data = client.post(MESSAGES_URL, json={"content": "Hello", "role": "user"}).get_json()
+    def test_persists_to_db(self, client, conversation):
+        conv_id = conversation["conversationId"]
+        post_resp = client.post(
+            f"{CONVERSATIONS_URL}/{conv_id}/messages",
+            json={"content": "Persisted", "role": "user"},
+        )
+        msg_id = post_resp.get_json()["message"]["messageId"]
+
+        get_resp = client.get(f"{CONVERSATIONS_URL}/{conv_id}/messages/{msg_id}")
+        assert get_resp.status_code == 200
+        assert get_resp.get_json()["message"]["content"] == "Persisted"
+
+    def test_response_is_camel_case(self, client, conversation):
+        conv_id = conversation["conversationId"]
+        data = client.post(
+            f"{CONVERSATIONS_URL}/{conv_id}/messages",
+            json={"content": "Hello", "role": "user"},
+        ).get_json()
 
         msg = data["message"]
         assert "messageId" in msg
@@ -206,45 +238,60 @@ class TestCreateMessage:
         assert "message_id" not in msg
         assert "conversation_id" not in msg
 
-    def test_missing_content_returns_400(self, client):
-        response = client.post(MESSAGES_URL, json={"role": "user"})
+    def test_missing_content_returns_400(self, client, conversation):
+        conv_id = conversation["conversationId"]
+        response = client.post(
+            f"{CONVERSATIONS_URL}/{conv_id}/messages", json={"role": "user"}
+        )
         assert response.status_code == 400
 
-    def test_missing_role_returns_400(self, client):
-        response = client.post(MESSAGES_URL, json={"content": "Hello"})
+    def test_missing_role_returns_400(self, client, conversation):
+        conv_id = conversation["conversationId"]
+        response = client.post(
+            f"{CONVERSATIONS_URL}/{conv_id}/messages", json={"content": "Hello"}
+        )
         assert response.status_code == 400
 
-    def test_no_body_returns_400(self, client):
-        response = client.post(MESSAGES_URL)
+    def test_no_body_returns_400(self, client, conversation):
+        conv_id = conversation["conversationId"]
+        response = client.post(f"{CONVERSATIONS_URL}/{conv_id}/messages")
         assert response.status_code == 400
 
 
 class TestGetMessage:
-    def test_returns_message(self, client):
-        with patch("app.api.chat.routes.get_message_service", return_value=SAMPLE_MESSAGE):
-            response = client.get(MESSAGE_URL)
+    def test_returns_message(self, client, message, conversation):
+        conv_id = conversation["conversationId"]
+        msg_id = message["messageId"]
+        response = client.get(f"{CONVERSATIONS_URL}/{conv_id}/messages/{msg_id}")
 
         assert response.status_code == 200
-        assert response.get_json() == {"message": SAMPLE_MESSAGE_JSON}
+        assert response.get_json()["message"]["messageId"] == msg_id
 
-    def test_not_found_returns_404(self, client):
-        from app.common.error_handler import NotFoundError
-        with patch("app.api.chat.routes.get_message_service", side_effect=NotFoundError()):
-            response = client.get(MESSAGE_URL)
+    def test_not_found_returns_404(self, client, conversation):
+        conv_id = conversation["conversationId"]
+        response = client.get(f"{CONVERSATIONS_URL}/{conv_id}/messages/{MISSING_ID}")
 
         assert response.status_code == 404
 
 
 class TestDeleteMessage:
-    def test_deletes_message(self, client):
-        with patch("app.api.chat.routes.delete_message_service"):
-            response = client.delete(MESSAGE_URL)
+    def test_deletes_message(self, client, message, conversation):
+        conv_id = conversation["conversationId"]
+        msg_id = message["messageId"]
+        response = client.delete(f"{CONVERSATIONS_URL}/{conv_id}/messages/{msg_id}")
 
         assert response.status_code == 204
 
-    def test_not_found_returns_404(self, client):
-        from app.common.error_handler import NotFoundError
-        with patch("app.api.chat.routes.delete_message_service", side_effect=NotFoundError()):
-            response = client.delete(MESSAGE_URL)
+    def test_deleted_message_is_gone(self, client, message, conversation):
+        conv_id = conversation["conversationId"]
+        msg_id = message["messageId"]
+        client.delete(f"{CONVERSATIONS_URL}/{conv_id}/messages/{msg_id}")
+
+        get_resp = client.get(f"{CONVERSATIONS_URL}/{conv_id}/messages/{msg_id}")
+        assert get_resp.status_code == 404
+
+    def test_not_found_returns_404(self, client, conversation):
+        conv_id = conversation["conversationId"]
+        response = client.delete(f"{CONVERSATIONS_URL}/{conv_id}/messages/{MISSING_ID}")
 
         assert response.status_code == 404
