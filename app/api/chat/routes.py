@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, g
 from .services import (
     list_conversations as list_conversations_service,
     create_conversation as create_conversation_service,
@@ -26,8 +26,7 @@ def list_conversations():
 
 @bp.post('/conversations')
 def create_conversation():
-    body = request.get_json(silent=True) or {}
-    req = CreateConversationRequest.model_validate(body)
+    req = CreateConversationRequest.model_validate(g.body)
     result = create_conversation_service(req)
     return jsonify({"conversation": result.model_dump(by_alias=True, mode='json')}), 201
 
@@ -40,8 +39,7 @@ def get_conversation(conversation_id: str):
 
 @bp.put('/conversations/<conversation_id>')
 def update_conversation(conversation_id: str):
-    body = request.get_json(silent=True) or {}
-    req = UpdateConversationRequest.model_validate(body)
+    req = UpdateConversationRequest.model_validate(g.body)
     result = update_conversation_service(conversation_id, req)
     return jsonify({"conversation": result.model_dump(by_alias=True, mode='json')})
 
@@ -63,10 +61,9 @@ def get_messages(conversation_id: str):
 
 @bp.post('/conversations/<conversation_id>/messages')
 def create_message(conversation_id: str):
-    body = request.get_json(silent=True) or {}
-    if not body.get("content") or not body.get("role"):
+    if not g.body.get("content") or not g.body.get("role"):
         raise ValidationError("content and role are required")
-    req = CreateMessageRequest.model_validate(body)
+    req = CreateMessageRequest.model_validate(g.body)
     result = create_message_service(conversation_id, req)
     return jsonify({"message": result.model_dump(by_alias=True, mode='json')}), 201
 
