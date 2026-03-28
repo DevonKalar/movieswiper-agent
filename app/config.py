@@ -1,8 +1,9 @@
 import os
 
 class BaseConfig:
-  MONGODB_URI = os.getenv('MONGODB_URI', 'mongodb://localhost:27017/ms-agent')
+  MONGO_URI = os.getenv('MONGO_URL', 'mongodb://localhost:27017/ms-agent')
   APP_ENV = os.getenv('APP_ENV', 'development')
+  JWT_SECRET = os.getenv('JWT_SECRET', '')
 
 class DevConfig(BaseConfig):
   DEBUG = True
